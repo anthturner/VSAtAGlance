@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
@@ -12,11 +13,10 @@ namespace VSAtAGlance.Targeting
     /// </summary>
     public class RoslynInferenceGazeTargeting : IGazeTargeting
     {
-        public List<SyntaxToken> GetTargetCandidateTokens(IWpfTextView editorInstance, double x, double y)
+        public List<GazeTarget> GetTargetCandidateTokens(IWpfTextView editorInstance, Workspace workspace, double x, double y)
         {
             var potentialGazePoints = GetPointsFromGazeCenter(editorInstance, x, y, strideWidthX: editorInstance.LineHeight / 2, strideWidthY: editorInstance.LineHeight);
-            var gazedElements = FindGazedElementsFromSnapshotPoints(editorInstance, potentialGazePoints);
-            return gazedElements;
+            return ScoreLikelyGazeTargetsFromScatteredPoints(editorInstance, workspace, potentialGazePoints);
         }
 
         private List<SnapshotPoint> GetPointsFromGazeCenter(IWpfTextView editorInstance, double x, double y, int radius = 50, double strideWidthX = 8, double strideWidthY = 10)
@@ -27,50 +27,56 @@ namespace VSAtAGlance.Targeting
             if (top < 0) top = 0;
 
             var pts = new List<SnapshotPoint>();
-            for (double i = left; i < x + radius; i += strideWidthX)
-                for (double j = top; j < y + radius; j += strideWidthY)
+            for (double i = left; i < left + (radius * 2); i += strideWidthX)
+                for (double j = top; j < top + (radius * 2); j += strideWidthY)
                 {
-                    var snapshot = GetSnapshotPointFromCoordinates(editorInstance, i, j);
-                    if (snapshot.HasValue)
-                    {
-                        if (pts.Any(p => p.Position == snapshot.Value.Position))
-                            continue;
-                        pts.Add(snapshot.Value);
-                    }
+                    var line = editorInstance.TextViewLines.GetTextViewLineContainingYCoordinate(j);
+                    if (line == null)
+                        continue;
+
+                    var bufferPosition = line.GetBufferPositionFromXCoordinate(i);
+                    if (!bufferPosition.HasValue)
+                        continue;
+
+                    if (pts.Any(p => p.Position == bufferPosition.Value.Position))
+                        continue;
+                    pts.Add(bufferPosition.Value);
                 }
             return pts;
         }
 
-        private SnapshotPoint? GetSnapshotPointFromCoordinates(IWpfTextView editorInstance, double x, double y)
+        private List<GazeTarget> ScoreLikelyGazeTargetsFromScatteredPoints(IWpfTextView editorInstance, Workspace workspace, List<SnapshotPoint> points)
         {
-            var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
-            var line = editorInstance.TextViewLines.GetTextViewLineContainingYCoordinate(y);
-            if (line == null)
-                return null;
-            var bufferPosition = line.GetBufferPositionFromXCoordinate(x);
-            if (!bufferPosition.HasValue)
-                return null;
-
-            return bufferPosition;
-        }
-
-        private List<SyntaxToken> FindGazedElementsFromSnapshotPoints(IWpfTextView editorInstance, List<SnapshotPoint> points)
-        {
-            var tokens = new List<SyntaxToken>();
-
-            // extract the roslyn syntaxnode from the gazed point
             Document document = editorInstance.TextBuffer.CurrentSnapshot.GetOpenDocumentInCurrentContextWithChanges();
             SemanticModel semanticModel = document.GetSemanticModelAsync().Result;
-            if (semanticModel == null)
-                return tokens;
 
+            var foundTokens = new List<SyntaxToken>();
+            var possibleTargets = new List<GazeTarget>();
             foreach (var point in points)
             {
-                var result = document.GetSyntaxRootAsync().Result.FindToken(point);
-                if (result != null && !tokens.Contains(result))
-                    tokens.Add(result);
+                var symbolsInPosition = semanticModel.LookupSymbols(point.Position).Where(s =>
+                    s.Kind == SymbolKind.Field ||
+                    s.Kind == SymbolKind.Local ||
+                    s.Kind == SymbolKind.Parameter ||
+                    s.Kind == SymbolKind.Property ||
+                    s.Kind == SymbolKind.RangeVariable);
+                foreach (var symbol in symbolsInPosition)
+                {
+                    // todo: weight results by a scoring metric... vector distance from centroid times a coefficient for SymbolKind?
+                    // todo: route async/TPL throughout
+                    
+                    var symbolReferences = SymbolFinder.FindReferencesAsync(symbol, workspace.CurrentSolution).Result;
+                    var target = new GazeTarget() { DataModel = symbol };
+                    var token = document.GetSyntaxRootAsync().Result.FindToken(point);
+                    target.DefinitionLocation = new GazeTargetLocation(token.Span.Start, token.Span.Length);
+
+                    foreach (var symbolReference in symbolReferences)
+                        foreach (var location in symbolReference.Locations)
+                            target.GazedLocations.Add(new GazeTargetLocation(location.Location.SourceSpan.Start, location.Location.SourceSpan.Length));
+                    possibleTargets.Add(target);
+                }
             }
-            return tokens;
+            return possibleTargets;
         }
     }
 }

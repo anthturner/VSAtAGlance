@@ -1,4 +1,5 @@
-﻿using System.Windows.Controls;
+﻿using System;
+using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
@@ -7,11 +8,13 @@ namespace VSAtAGlance.Layers
 {
     public class TextHighlightInformationalGazeLayerElement : GazeResponseLayer
     {
-        private Brush _color;
+        private double _weight;
 
-        public TextHighlightInformationalGazeLayerElement(IWpfTextView editorInstance, SnapshotSpan span, Brush color): base(editorInstance, GazeAdornment.GAZE_INFORMATIONAL_LAYER_NAME, span)
+        public override TimeSpan Timeout => TimeSpan.FromMilliseconds(100);
+
+        public TextHighlightInformationalGazeLayerElement(IWpfTextView editorInstance, SnapshotSpan span, double weight): base(editorInstance, GazeAdornment.GAZE_INFORMATIONAL_LAYER_NAME, span)
         {
-            _color = color;
+            _weight = weight;
         }
 
         public override void Draw()
@@ -20,9 +23,13 @@ namespace VSAtAGlance.Layers
 
             EditorInstance.VisualElement.Dispatcher.Invoke(() =>
             {
+                var brush = new SolidColorBrush(
+                                    Color.FromArgb((byte)((_weight / 1.0) * 255), 0, 255, 0)
+                                );
+
                 var adornment = new System.Windows.Shapes.Rectangle
                 {
-                    Fill = _color,
+                    Fill = brush,
                     Stroke = System.Windows.Media.Brushes.Black,
                     Opacity = 0.6,
                     StrokeThickness = 1

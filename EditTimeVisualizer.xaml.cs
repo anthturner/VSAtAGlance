@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Windows.Controls;
+using VSAtAGlance.Targeting;
 using VSAtAGlance.VariableDebugging;
 
 namespace VSAtAGlance
@@ -38,16 +39,27 @@ namespace VSAtAGlance
 
     public class EditTimeVisualizerModel
     {
-        public string ID { get; set; }
+        //public string ID { get; set; }
         public string Name { get; set; }
         public string Value { get; set; }
 
         public bool IsValid => !string.IsNullOrEmpty(Value);
 
+        public static EditTimeVisualizerModel Create(GazeTarget target)
+        {
+            var model = new EditTimeVisualizerModel();
+            //model.ID = target.Start + "_" + target.Length;
+
+            model.Name = ((ISymbol)target.DataModel).Name;
+            model.Value = AttemptGetDebuggerValue(model.Name);
+
+            return model;
+        }
+
         public static EditTimeVisualizerModel Create(SyntaxNode node)
         {
             var model = new EditTimeVisualizerModel();
-            model.ID = node.FullSpan.Start + "_" + node.FullSpan.Length;
+            //model.ID = node.Span.Start + "_" + node.Span.Length;
 
             Debug.WriteLine($"SyntaxNode is {node.GetType()}");
 
